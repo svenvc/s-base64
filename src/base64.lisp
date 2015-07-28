@@ -12,28 +12,57 @@
 
 (in-package :s-base64)
 
-(defparameter +base64-alphabet+
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+(declaim (ftype (function ((string 64))
+                          (vector (signed-byte 8) 127))
+                make-inverse-alphabet))
+(defun make-inverse-alphabet (alphabet)
+  "Create an inverse alphabet table for a base64 alphabet."
+  (let ((inverse-alphabet (make-array 127
+                                      :element-type '(signed-byte 8))))
+    (dotimes (i 127 inverse-alphabet)
+      (setf (aref inverse-alphabet i)
+            (or (position (code-char i) alphabet)
+                -1)))))
 
-(defparameter +inverse-base64-alphabet+
-  (let ((inverse-base64-alphabet (make-array 127)))
-    (dotimes (i 127 inverse-base64-alphabet)
-      (setf (aref inverse-base64-alphabet i)
-	    (position (code-char i) +base64-alphabet+)))))
-      
+(defparameter +standard-base64-alphabet+
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+(defparameter +inverse-standard-base64-alphabet+ (make-inverse-alphabet +standard-base64-alphabet+))
+
+(defparameter +base64url-alphabet+
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  "Alphabet for encoding base64url alphabet.")
+(defparameter +inverse-base64url-alphabet+ (make-inverse-alphabet +base64url-alphabet+)
+  "Inverse alphabet for decoding base64url encoded strings.")
+
+(declaim (type (string 64) *base64-alphabet*))
+(defparameter *base64-alphabet* +standard-base64-alphabet+
+  "The Alphabet to use for base64 encoding. A string of 64 characters.")
+
+(declaim (type (vector (signed-byte 8) 127) *inverse-base64-alphabet*))
+(defparameter *inverse-base64-alphabet* +inverse-standard-base64-alphabet+
+  "The inverse alphabet to use for base64 decoding. Should be the result of calling
+MAKE-INVERSE-ALPHABET on an alphabet.")
+
+(defmacro with-base64url-encoding (&body body)
+  "Execute body in a context where encoding uses the base64url
+instead of the standard alphabet."
+  `(let ((*base64-alphabet* +base64url-alphabet+)
+         (*inverse-base64-alphabet* +inverse-base64url-alphabet+))
+     ,@body))
+
 (defun core-encode-base64 (byte1 byte2 byte3)
-  (values (char +base64-alphabet+ (ash byte1 -2))
-	  (char +base64-alphabet+ (logior (ash (logand byte1 #B11) 4)
+  (values (char *base64-alphabet* (ash byte1 -2))
+	  (char *base64-alphabet* (logior (ash (logand byte1 #B11) 4)
 					   (ash (logand byte2 #B11110000) -4)))
-	  (char +base64-alphabet+ (logior (ash (logand byte2 #B00001111) 2)
+	  (char *base64-alphabet* (logior (ash (logand byte2 #B00001111) 2)
 					   (ash (logand byte3 #B11000000) -6)))
-	  (char +base64-alphabet+ (logand byte3 #B111111))))
+	  (char *base64-alphabet* (logand byte3 #B111111))))
 
 (defun core-decode-base64 (char1 char2 char3 char4)
-  (let ((v1 (aref +inverse-base64-alphabet+ (char-code char1)))
-	(v2 (aref +inverse-base64-alphabet+ (char-code char2)))
-	(v3 (aref +inverse-base64-alphabet+ (char-code char3)))
-	(v4 (aref +inverse-base64-alphabet+ (char-code char4))))
+  (let ((v1 (aref *inverse-base64-alphabet* (char-code char1)))
+	(v2 (aref *inverse-base64-alphabet* (char-code char2)))
+	(v3 (aref *inverse-base64-alphabet* (char-code char3)))
+	(v4 (aref *inverse-base64-alphabet* (char-code char4))))
     (values (logior (ash v1 2)
 		    (ash v2 -4))
 	    (logior (ash (logand v2 #B1111) 4)
@@ -45,7 +74,7 @@
   (loop
    (let ((char (peek-char nil stream nil nil)))
      (cond ((null char) (return nil))
-	   ((null (aref +inverse-base64-alphabet+ (char-code char))) (read-char stream))
+	   ((minusp (aref *inverse-base64-alphabet* (char-code char))) (read-char stream))
 	   (t (return char))))))
 
 (defun decode-base64-bytes (stream)
@@ -61,7 +90,7 @@
 	   (in3 (read-char stream nil nil))
 	   (in4 (read-char stream nil nil)))
        (if (null in1) (return))
-       (if (or (null in2) (null in3) (null in4)) (error "input not aligned/padded for base64 encoding")) 
+       (if (or (null in2) (null in3) (null in4)) (error "input not aligned/padded for base64 encoding"))
        (multiple-value-bind (out1 out2 out3)
 	   (core-decode-base64 in1
 			       in2
@@ -106,7 +135,7 @@
 	   (setf counter 0)))))))
 
 (defun decode-base64 (in out)
-  "Decode a base64 encoded character input stream into a binary output stream" 
+  "Decode a base64 encoded character input stream into a binary output stream"
   (loop
    (skip-base64-whitespace in)
    (let ((in1 (read-char in nil nil))
@@ -114,7 +143,7 @@
 	 (in3 (read-char in nil nil))
 	 (in4 (read-char in nil nil)))
      (if (null in1) (return))
-     (if (or (null in2) (null in3) (null in4)) (error "input not aligned/padded for base64 encoding")) 
+     (if (or (null in2) (null in3) (null in4)) (error "input not aligned/padded for base64 encoding"))
      (multiple-value-bind (out1 out2 out3)
 	 (core-decode-base64 in1 in2 (if (char= in3 #\=) #\A in3) (if (char= in4 #\=) #\A in4))
        (write-byte out1 out)
